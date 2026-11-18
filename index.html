@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101827" />
+    <meta name="description" content="E-Scan — numérisez vos documents avec précision." />
+    <title>E-Scan — Scanner de documents</title>
+    <script>
+      var Module = {
+        onRuntimeInitialized() {
+          window.dispatchEvent(new Event("opencv-ready"));
+        }
+      };
+    </script>
+    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
