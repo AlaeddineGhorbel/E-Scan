@@ -11,9 +11,9 @@ This roadmap is milestone-based. Dates and estimates will be set after the techn
 
 ## Milestone 1 — Technical proof of concept
 - [ ] Flutter Android camera capture.
-- [ ] React Web image import and camera permission flow.
+- [x] React Web image import (camera permission flow remains pending).
 - [ ] OpenCV perspective correction on Android.
-- [ ] OpenCV.js perspective correction on Web.
+- [x] OpenCV.js perspective-correction proof of concept on Web.
 - [ ] Compare outputs on shared test fixtures.
 - [ ] Confirm PDF generation options.
 
