@@ -40,7 +40,7 @@ h2{font-size:16px;margin:0;font-weight:700}
 .image-stage img,.image-stage canvas{max-width:100%;max-height:100%;object-fit:contain;display:block}
 .empty-result{text-align:center;color:#70839a;font-size:11px;line-height:1.7}
 .empty-result span{font-size:27px;color:#b9f36b}
-.hidden-canvas{display:none!important}
+.hidden-canvas{display:none!important}.result-canvas{display:block!important}
 .actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
 .primary-button,.secondary-button{border-radius:9px;padding:12px 17px;font-size:11px;font-weight:700;cursor:pointer;transition:transform .15s,opacity .15s}
 .primary-button{background:#b9f36b;color:#142116;border:1px solid #b9f36b}
