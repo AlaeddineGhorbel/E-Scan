@@ -19,9 +19,9 @@ This roadmap is milestone-based. Dates and estimates will be set after the techn
 
 ## Milestone 2 — First scanning workflow
 - [ ] Capture/import page.
-- [ ] Automatic boundary detection.
+- [x] Initial automatic boundary-detection heuristic on Web (quality validation pending).
 - [ ] Manual corner adjustment.
-- [ ] Perspective correction.
+- [x] Initial Web perspective correction (quality validation pending).
 - [ ] Original and processed preview.
 - [ ] Save page locally.
 
