@@ -36,6 +36,8 @@ function warpToCanvas(cv: OpenCV, source: OpenCV, corners: Point[], canvas: HTML
   let destinationPoints: OpenCV | undefined;
   let transform: OpenCV | undefined;
   let warped: OpenCV | undefined;
+  let softened: OpenCV | undefined;
+  let sharpened: OpenCV | undefined;
   try {
     sourcePoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
       topLeft.x, topLeft.y, topRight.x, topRight.y,
@@ -51,10 +53,17 @@ function warpToCanvas(cv: OpenCV, source: OpenCV, corners: Point[], canvas: HTML
       new cv.Size(Math.round(width), Math.round(height)),
       cv.INTER_CUBIC, cv.BORDER_REPLICATE
     );
-    cv.imshow(canvas, warped);
+
+    // Netteté légère après redressement : renforce les caractères sans
+    // appliquer un filtre agressif qui créerait des halos ou du bruit.
+    softened = new cv.Mat();
+    sharpened = new cv.Mat();
+    cv.GaussianBlur(warped, softened, new cv.Size(0, 0), 1.0);
+    cv.addWeighted(warped, 1.12, softened, -0.12, 0, sharpened);
+    cv.imshow(canvas, sharpened);
     return true;
   } finally {
-    [sourcePoints, destinationPoints, transform, warped].forEach((mat) => {
+    [sourcePoints, destinationPoints, transform, warped, softened, sharpened].forEach((mat) => {
       if (mat) { try { mat.delete(); } catch { /* déjà libéré */ } }
     });
   }
