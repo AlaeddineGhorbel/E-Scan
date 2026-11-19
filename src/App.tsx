@@ -72,15 +72,41 @@ export default function App() {
   // Coins du document, en fractions (0 à 1) de la largeur et de la hauteur de l’image.
   const [corners, setCorners] = useState<Point[] | null>(null);
   const [opencvReady, setOpencvReady] = useState(false);
+  const [opencvError, setOpencvError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Importez une photo pour commencer.");
   const [hasResult, setHasResult] = useState(false);
 
   useEffect(() => {
-    const check = () => { if (window.cv?.Mat) setOpencvReady(true); };
+    let attempts = 0;
+    const check = () => {
+      // OpenCV.js peut terminer son initialisation après le chargement du
+      // script : on vérifie le vrai moteur, pas seulement l'événement réseau.
+      if (window.cv?.Mat) {
+        setOpencvReady(true);
+        setOpencvError(false);
+        window.clearInterval(timer);
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 200) {
+        window.clearInterval(timer);
+        setOpencvError(true);
+      }
+    };
+    const onLoadError = () => {
+      setOpencvError(true);
+      window.clearInterval(timer);
+    };
+    window.addEventListener("opencv-load-error", onLoadError);
     window.addEventListener("opencv-ready", check);
+    const timer = window.setInterval(check, 150);
     check();
-    return () => window.removeEventListener("opencv-ready", check);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("opencv-ready", check);
+      window.removeEventListener("opencv-load-error", onLoadError);
+    };
   }, []);
 
   useEffect(() => {
@@ -226,7 +252,7 @@ export default function App() {
         <div className="eyebrow"><span className="pulse" /> TRAITEMENT LOCAL · SANS IA</div>
         <h1>Vos documents,<br /><em>en toute netteté.</em></h1>
         <p>Importez une photo. E-Scan cherche les bords du document, vous laisse ajuster les 4 coins, puis corrige la perspective directement dans votre navigateur.</p>
-        <div className="engine-status"><span className={opencvReady ? "status-dot ready" : "status-dot"} />{opencvReady ? "Moteur OpenCV prêt" : "Chargement du moteur de traitement…"}</div>
+        <div className="engine-status"><span className={opencvReady ? "status-dot ready" : "status-dot"} />{opencvReady ? "Moteur OpenCV prêt" : opencvError ? "Moteur indisponible — rechargez la page" : "Chargement du moteur de traitement…"}</div>
       </section>
       <section className="workspace">
         <div className="workspace-head">
@@ -285,7 +311,7 @@ export default function App() {
               </div>
             </article>
           </div>
-          <p className="feedback" role="status" ref={feedbackRef}>{message}</p>
+          <p className="feedback" role="status" ref={feedbackRef}>{opencvError && !opencvReady ? "Le moteur de numérisation n’a pas pu se charger. Vérifiez la connexion puis rechargez la page." : message}</p>
           <div className="actions">
             <button className="primary-button" onClick={processDocument} disabled={!opencvReady || busy}>{busy ? "Traitement…" : corners ? "✓  Appliquer les coins" : "⌁  Détecter et corriger"}</button>
             {corners && <button className="secondary-button" onClick={() => { setCorners(null); setHasResult(false); setMessage("Coins réinitialisés. Relancez la détection."); }} disabled={busy}>Redétecter</button>}
