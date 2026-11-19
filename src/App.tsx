@@ -25,53 +25,51 @@ function readFullResolution(cv: OpenCV, image: HTMLImageElement): OpenCV {
 function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
   const lab = new cv.Mat();
   const channels = new cv.MatVector();
-  const luminance = new cv.Mat();
   const illumination = new cv.Mat();
   const normalized = new cv.Mat();
   const merged = new cv.Mat();
+  let l: OpenCV | undefined;
+  let a: OpenCV | undefined;
+  let b: OpenCV | undefined;
+  const correctedChannels = new cv.MatVector();
   try {
     cv.cvtColor(input, lab, cv.COLOR_RGBA2Lab);
     cv.split(lab, channels);
-    const l = channels.get(0);
-    const a = channels.get(1);
-    const b = channels.get(2);
-    cv.GaussianBlur(l, illumination, new cv.Size(0, 0), Math.max(12, Math.min(input.cols, input.rows) / 18));
-    // L_corr = L * moyenne(éclairage) / éclairage local.
-    const mean = cv.mean(illumination)[0];
-    const illum32 = new cv.Mat();
-    const light32 = new cv.Mat();
-    const corrected32 = new cv.Mat();
-    try {
-      illumination.convertTo(illum32, cv.CV_32F);
-      l.convertTo(light32, cv.CV_32F);
-      cv.add(illum32, new cv.Scalar(1), illum32);
-      cv.multiply(light32, new cv.Scalar(mean + 1), corrected32);
-      cv.divide(corrected32, illum32, corrected32);
-      corrected32.convertTo(normalized, cv.CV_8U);
-    } finally {
-      illum32.delete();
-      light32.delete();
-      corrected32.delete();
+    l = channels.get(0);
+    a = channels.get(1);
+    b = channels.get(2);
+
+    // Estimation à grande échelle : le flou doit suivre les ombres diffuses,
+    // sans suivre les caractères et les petits détails du document.
+    const sigma = Math.max(18, Math.min(input.cols, input.rows) / 12);
+    cv.GaussianBlur(l, illumination, new cv.Size(0, 0), sigma);
+    const meanLight = cv.mean(illumination)[0];
+    const sourcePixels = l.data as Uint8Array;
+    const lightPixels = illumination.data as Uint8Array;
+    const outputPixels = normalized.data as Uint8Array;
+    normalized.create(l.rows, l.cols, cv.CV_8UC1);
+    for (let i = 0; i < sourcePixels.length; i += 1) {
+      // Limiter le gain évite de brûler les zones sombres ou de créer des
+      // artefacts lorsque l'estimation locale est presque noire.
+      const gain = Math.max(0.78, Math.min(1.38, (meanLight + 1) / (lightPixels[i] + 1)));
+      outputPixels[i] = Math.max(0, Math.min(255, Math.round(sourcePixels[i] * gain)));
     }
-    const correctedChannels = new cv.MatVector();
+
     correctedChannels.push_back(normalized);
     correctedChannels.push_back(a);
     correctedChannels.push_back(b);
-    try {
-      cv.merge(correctedChannels, merged);
-      const result = new cv.Mat();
-      cv.cvtColor(merged, result, cv.COLOR_Lab2RGBA);
-      return result;
-    } finally {
-      correctedChannels.delete();
-    }
+    cv.merge(correctedChannels, merged);
+    const result = new cv.Mat();
+    cv.cvtColor(merged, result, cv.COLOR_Lab2RGBA);
+    return result;
   } finally {
+    correctedChannels.delete();
     channels.delete();
     lab.delete();
-    luminance.delete();
     illumination.delete();
     normalized.delete();
     merged.delete();
+    [l, a, b].forEach((mat) => { if (mat) { try { mat.delete(); } catch { /* déjà libéré */ } } });
   }
 }
 
