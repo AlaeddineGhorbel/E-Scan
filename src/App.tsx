@@ -104,6 +104,7 @@ function detectDocumentCorners(cv: OpenCV, source: OpenCV): Point[] | null {
 export default function App() {
   const imageRef = useRef<HTMLImageElement>(null);
   const outputRef = useRef<HTMLCanvasElement>(null);
+  const feedbackRef = useRef<HTMLParagraphElement>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [fileName, setFileName] = useState("");
   const [opencvReady, setOpencvReady] = useState(false);
@@ -158,7 +159,11 @@ export default function App() {
         source = cv.imread(image);
         const corners = detectDocumentCorners(cv, source);
         if (!corners) {
-          setMessage("Je n’ai pas trouvé de contour assez fiable. Essayez une photo plus nette, avec les quatre bords visibles et un fond contrasté.");
+          // Aucun quadrilatère fiable : image probablement déjà cadrée (capture d’écran,
+          // scan plat…). On l’affiche telle quelle pour que le bouton ait toujours un effet visible.
+          cv.imshow(canvas, source);
+          setHasResult(true);
+          setMessage("Aucun bord de document détecté : l’image semble déjà cadrée, elle est reprise telle quelle. Pour une correction de perspective, utilisez une photo du document posé sur un fond contrasté, avec les quatre bords visibles.");
           return;
         }
 
@@ -201,6 +206,7 @@ export default function App() {
           if (mat) { try { mat.delete(); } catch { /* already released */ } }
         });
         setBusy(false);
+        window.setTimeout(() => feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
       }
     }, 30);
   }
@@ -252,12 +258,13 @@ export default function App() {
               </div>
             </article>
           </div>
+          <p className="feedback" role="status" ref={feedbackRef}>{message}</p>
           <div className="actions">
             <button className="primary-button" onClick={processDocument} disabled={!opencvReady || busy}>{busy ? "Traitement…" : "⌁  Détecter et corriger"}</button>
             <button className="secondary-button" onClick={downloadResult} disabled={!hasResult}>Télécharger le résultat</button>
           </div>
         </>}
-        <p className="feedback" role="status">{message}</p>
+        {!sourceUrl && <p className="feedback" role="status">{message}</p>}
       </section>
       <footer><span>E-SCAN · EXCELLENT SCANNER</span><span>Le document original n’est jamais écrasé.</span></footer>
     </main>
