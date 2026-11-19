@@ -83,10 +83,15 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
     const strategies: Array<(output: OpenCV) => void> = [
       (output) => cv.Canny(blurred, output, 40, 120),
       (output) => cv.Canny(blurred, output, 70, 180),
-      (output) => cv.adaptiveThreshold(
-        blurred, output, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv.THRESH_BINARY, 31, 10
-      )
+      (output) => {
+        // OpenCV exige un bloc impair supérieur à 1 et inférieur aux dimensions.
+        const limit = Math.max(3, Math.min(31, Math.min(source.cols, source.rows) - (Math.min(source.cols, source.rows) % 2 === 0 ? 1 : 0)));
+        const blockSize = Math.max(3, limit % 2 === 0 ? limit - 1 : limit);
+        cv.adaptiveThreshold(
+          blurred, output, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+          cv.THRESH_BINARY, blockSize, 10
+        );
+      }
     ];
 
     for (const makeMask of strategies) {
@@ -164,14 +169,14 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
  * contraste de luminosité est faible (papier clair sur table grise).
  */
 function detectByBackground(cv: OpenCV, source: OpenCV): Point[] | null {
-  const toDelete: OpenCV[] = [];
-  const keep = <T,>(mat: T): T => { toDelete.push(mat); return mat; };
+  const owned: OpenCV[] = [];
+  const keep = <T,>(mat: T): T => { owned.push(mat); return mat; };
   try {
     const rgb = keep(new cv.Mat());
     const blur = keep(new cv.Mat());
     const lab = keep(new cv.Mat());
     cv.cvtColor(source, rgb, cv.COLOR_RGBA2RGB);
-    cv.GaussianBlur(rgb, blur, new cv.Size(9, 9), 0);
+    cv.GaussianBlur(rgb, blur, new cv.Size(5, 5), 0);
     cv.cvtColor(blur, lab, cv.COLOR_RGB2Lab);
 
     const w = lab.cols;
@@ -208,59 +213,77 @@ function detectByBackground(cv: OpenCV, source: OpenCV): Point[] | null {
     const mask = keep(new cv.Mat());
     cv.threshold(distance, mask, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
     const small = Math.min(w, h);
-    const closeKernel = keep(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(odd(0.06 * small), odd(0.06 * small))));
-    const openKernel = keep(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(odd(0.035 * small), odd(0.035 * small))));
-    const closed = keep(new cv.Mat());
-    const opened = keep(new cv.Mat());
-    cv.morphologyEx(mask, closed, cv.MORPH_CLOSE, closeKernel);
-    cv.morphologyEx(closed, opened, cv.MORPH_OPEN, openKernel);
+    const closeKernel = keep(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(odd(0.045 * small), odd(0.045 * small))));
+    const openKernel = keep(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(odd(0.018 * small), odd(0.018 * small))));
+    const cleaned = keep(new cv.Mat());
+    cv.morphologyEx(mask, cleaned, cv.MORPH_CLOSE, closeKernel);
+    cv.morphologyEx(cleaned, cleaned, cv.MORPH_OPEN, openKernel);
 
     const contours = keep(new cv.MatVector());
     const hierarchy = keep(new cv.Mat());
-    cv.findContours(opened, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    cv.findContours(cleaned, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    const flat: number[] = [];
+    // Important : ne plus réunir tous les objets détectés dans une seule
+    // enveloppe convexe. Cette ancienne opération pouvait relier la feuille
+    // à une ombre, un autre objet ou au bord de la table.
+    let best: Point[] | null = null;
+    let bestScore = 0;
     for (let i = 0; i < contours.size(); i += 1) {
       const contour = contours.get(i);
-      if (Math.abs(cv.contourArea(contour)) > 0.02 * w * h) {
-        const points = contour.data32S as Int32Array;
-        for (let k = 0; k < points.length; k += 1) flat.push(points[k]);
+      const hull = new cv.Mat();
+      try {
+        const contourArea = Math.abs(cv.contourArea(contour));
+        if (contourArea < 0.035 * w * h || contourArea > 0.985 * w * h) continue;
+        cv.convexHull(contour, hull, false, true);
+        const perimeter = cv.arcLength(hull, true);
+        let candidate: Point[] | null = null;
+        for (let eps = 0.008; eps <= 0.075 && !candidate; eps += 0.004) {
+          const approx = new cv.Mat();
+          try {
+            cv.approxPolyDP(hull, approx, eps * perimeter, true);
+            if (approx.rows === 4 && cv.isContourConvex(approx)) {
+              candidate = Array.from({ length: 4 }, (_, index) => ({
+                x: approx.intAt(index, 0),
+                y: approx.intAt(index, 1)
+              }));
+            }
+          } finally {
+            approx.delete();
+          }
+        }
+        if (!candidate) {
+          const rect = cv.minAreaRect(hull);
+          candidate = (cv.RotatedRect.points(rect) as Point[]).map((point) => ({ x: point.x, y: point.y }));
+        }
+
+        const ordered = orderCorners(candidate);
+        if (!plausibleQuad(ordered, w, h)) continue;
+        const fraction = quadArea(ordered) / (w * h);
+        if (fraction < 0.08 || fraction > 0.94) continue;
+        const sideLengths = ordered.map((point, index) => {
+          const next = ordered[(index + 1) % 4];
+          return Math.hypot(next.x - point.x, next.y - point.y);
+        });
+        const oppositeBalance =
+          Math.min(sideLengths[0], sideLengths[2]) / Math.max(sideLengths[0], sideLengths[2]) *
+          Math.min(sideLengths[1], sideLengths[3]) / Math.max(sideLengths[1], sideLengths[3]);
+        const xs = ordered.map((point) => point.x);
+        const ys = ordered.map((point) => point.y);
+        const margin = Math.min(...xs, ...ys, w - 1 - Math.max(...xs), h - 1 - Math.max(...ys));
+        const framePenalty = margin < 0.006 * Math.min(w, h) ? 0.45 : 1;
+        const score = Math.sqrt(fraction) * (0.55 + 0.45 * oppositeBalance) * framePenalty;
+        if (score > bestScore) {
+          bestScore = score;
+          best = ordered;
+        }
+      } finally {
+        hull.delete();
+        contour.delete();
       }
-      contour.delete();
     }
-    if (flat.length < 8) return null;
-
-    const cloud = keep(cv.matFromArray(flat.length / 2, 1, cv.CV_32SC2, flat));
-    const hull = keep(new cv.Mat());
-    cv.convexHull(cloud, hull, false, true);
-    const perimeter = cv.arcLength(hull, true);
-
-    let quad: Point[] | null = null;
-    for (let eps = 0.01; eps <= 0.09 && !quad; eps += 0.005) {
-      const approx = new cv.Mat();
-      cv.approxPolyDP(hull, approx, eps * perimeter, true);
-      if (approx.rows === 4) {
-        quad = Array.from({ length: 4 }, (_, index) => ({
-          x: approx.intAt(index, 0),
-          y: approx.intAt(index, 1)
-        }));
-      }
-      approx.delete();
-    }
-    if (!quad) {
-      const rect = cv.minAreaRect(hull);
-      quad = (cv.RotatedRect.points(rect) as Point[]).map((point) => ({ x: point.x, y: point.y }));
-    }
-
-    const clipped = orderCorners(quad).map((point) => ({
-      x: Math.min(w - 1, Math.max(0, point.x)),
-      y: Math.min(h - 1, Math.max(0, point.y))
-    }));
-    const fraction = quadArea(clipped) / (w * h);
-    if (fraction < 0.2 || fraction > 0.995) return null;
-    return clipped;
+    return best;
   } finally {
-    toDelete.forEach((mat) => { try { mat.delete(); } catch { /* déjà libéré */ } });
+    owned.forEach((mat) => { try { mat.delete(); } catch { /* déjà libéré */ } });
   }
 }
 
