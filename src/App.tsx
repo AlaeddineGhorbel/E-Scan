@@ -26,9 +26,7 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
   const lab = new cv.Mat();
   const channels = new cv.MatVector();
   const illumination = new cv.Mat();
-  const illuminationBase = new cv.Mat();
   const normalized = new cv.Mat();
-  let illuminationKernel: OpenCV | undefined;
   const merged = new cv.Mat();
   let l: OpenCV | undefined;
   let a: OpenCV | undefined;
@@ -41,22 +39,10 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
     a = channels.get(1);
     b = channels.get(2);
 
-    // Le filtre morphologique de fermeture atténue les petits traits sombres
-    // (texte) dans la carte d'éclairage, tout en conservant les variations
-    // lumineuses larges. Un flou final évite les transitions artificielles.
-    const minSide = Math.min(input.cols, input.rows);
-    let kernelSize = Math.max(3, Math.min(151, Math.floor(minSide / 18)));
-    if (kernelSize % 2 === 0) kernelSize += 1;
-    if (kernelSize > minSide) kernelSize = minSide % 2 === 0 ? minSide - 1 : minSide;
-    kernelSize = Math.max(3, kernelSize);
-    illuminationKernel = cv.getStructuringElement(
-      cv.MORPH_ELLIPSE, new cv.Size(kernelSize, kernelSize)
-    );
-    cv.morphologyEx(l, illuminationBase, cv.MORPH_CLOSE, illuminationKernel);
-    cv.GaussianBlur(
-      illuminationBase, illumination, new cv.Size(0, 0),
-      Math.max(5, kernelSize / 6)
-    );
+    // Estimation à grande échelle : le flou doit suivre les ombres diffuses,
+    // sans suivre les caractères et les petits détails du document.
+    const sigma = Math.max(18, Math.min(input.cols, input.rows) / 12);
+    cv.GaussianBlur(l, illumination, new cv.Size(0, 0), sigma);
     const meanLight = cv.mean(illumination)[0];
     const sourcePixels = l.data as Uint8Array;
     const lightPixels = illumination.data as Uint8Array;
@@ -65,8 +51,7 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
     for (let i = 0; i < sourcePixels.length; i += 1) {
       // Limiter le gain évite de brûler les zones sombres ou de créer des
       // artefacts lorsque l'estimation locale est presque noire.
-      const rawGain = Math.pow((meanLight + 1) / (lightPixels[i] + 1), 0.82);
-      const gain = Math.max(0.78, Math.min(1.48, rawGain));
+      const gain = Math.max(0.78, Math.min(1.38, (meanLight + 1) / (lightPixels[i] + 1)));
       outputPixels[i] = Math.max(0, Math.min(255, Math.round(sourcePixels[i] * gain)));
     }
 
@@ -82,8 +67,6 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
     channels.delete();
     lab.delete();
     illumination.delete();
-    illuminationBase.delete();
-    if (illuminationKernel) { try { illuminationKernel.delete(); } catch { /* déjà libéré */ } }
     normalized.delete();
     merged.delete();
     [l, a, b].forEach((mat) => { if (mat) { try { mat.delete(); } catch { /* déjà libéré */ } } });
@@ -247,10 +230,7 @@ export default function App() {
           setCorners(fractions);
           if (found.method === "default") {
             autoWarp = false;
-            notice = "Détection automatique incertaine. Placez les 4 points verts sur les coins du document, puis appuyez sur « Appliquer les coins ».";
-          } else if (found.method === "review") {
-            autoWarp = false;
-            notice = "Les deux méthodes ne sont pas d’accord sur les bords. Le cadrage proposé n’est pas appliqué automatiquement : vérifiez et ajustez les 4 points verts.";
+            notice = "Les bords n’ont pas pu être détectés automatiquement. Placez les 4 points verts sur les coins du document (sur l’image Original), puis appuyez sur « Appliquer les coins ».";
           } else {
             notice = "Bords détectés. Vérifiez les 4 points verts sur l’image Original ; déplacez-les si besoin puis appuyez sur « Appliquer les coins ».";
           }
