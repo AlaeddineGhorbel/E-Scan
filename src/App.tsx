@@ -46,8 +46,8 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
     const meanLight = cv.mean(illumination)[0];
     const sourcePixels = l.data as Uint8Array;
     const lightPixels = illumination.data as Uint8Array;
-    const outputPixels = normalized.data as Uint8Array;
     normalized.create(l.rows, l.cols, cv.CV_8UC1);
+    const outputPixels = normalized.data as Uint8Array;
     for (let i = 0; i < sourcePixels.length; i += 1) {
       // Limiter le gain évite de brûler les zones sombres ou de créer des
       // artefacts lorsque l'estimation locale est presque noire.
