@@ -1,6 +1,6 @@
 export type Point = { x: number; y: number };
 export type OpenCV = any;
-export type Method = "edges" | "background" | "default";
+export type Method = "edges" | "background" | "review" | "default";
 
 export function orderCorners(points: Point[]): Point[] {
   // Tri angulaire autour du centre : évite les doublons fréquents de la
@@ -328,9 +328,25 @@ export function findCorners(cv: OpenCV, source: OpenCV): { corners: Point[]; met
       const bgArea = quadArea(background) / (small.cols * small.rows);
       const edgeNearFrame = edges.some((p) => p.x < small.cols * 0.008 || p.y < small.rows * 0.008 ||
         p.x > small.cols * 0.992 || p.y > small.rows * 0.992);
-      if (edgeNearFrame && bgArea > 0.08 && bgArea < 0.88) return { corners: back(background), method: "background" };
-      if (bgArea > edgeArea * 1.18 && bgArea < 0.88) return { corners: back(background), method: "background" };
-      return { corners: back(edges), method: "edges" };
+      const preferBackground =
+        (edgeNearFrame && bgArea > 0.08 && bgArea < 0.88) ||
+        (bgArea > edgeArea * 1.18 && bgArea < 0.88);
+      const selected = preferBackground ? background : edges;
+
+      // Deux détecteurs qui désignent des quadrilatères très différents sont
+      // un signal de faible confiance : on conserve le meilleur candidat comme
+      // point de départ, mais on interdit le redressement automatique.
+      const diagonal = Math.hypot(small.cols, small.rows);
+      const disagreement = Math.sqrt(
+        selected.reduce((sum, point, index) => {
+          const other = (preferBackground ? edges : background)[index];
+          return sum + Math.pow(point.x - other.x, 2) + Math.pow(point.y - other.y, 2);
+        }, 0) / 4
+      ) / diagonal;
+      if (disagreement > 0.075) {
+        return { corners: back(selected), method: "review" };
+      }
+      return { corners: back(selected), method: preferBackground ? "background" : "edges" };
     }
     if (edges) return { corners: back(edges), method: "edges" };
     if (background) return { corners: back(background), method: "background" };

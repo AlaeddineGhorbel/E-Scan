@@ -26,13 +26,13 @@ The OpenCV.js runtime currently loads from the official OpenCV documentation CDN
 
 E-Scan analyzes a reduced copy of the image. It searches for quadrilaterals using edge contours and a separate background-color segmentation strategy. Background segmentation now evaluates each connected contour independently instead of joining unrelated objects into one convex hull; this reduces the risk of joining a page to a cast shadow, another object or the table edge.
 
-Candidates are filtered using area, side lengths, convexity, corner angles and opposite-side balance. These are deterministic computer-vision heuristics, not a trained model. A table with a color close to the paper, a shadow touching the page edge, clutter, curled pages, low contrast or a cropped document can still cause an incorrect result. Always inspect the four handles and adjust them when necessary. A detected quadrilateral is not yet a measured confidence guarantee.
+Candidates are filtered using area, side lengths, convexity, corner angles and opposite-side balance. When both independent detection strategies return candidates but their corners disagree materially, E-Scan now withholds automatic perspective correction and asks the user to review the proposed handles. This reduces the risk of silently applying an obviously conflicting crop, but does not prove that either candidate is correct. These are deterministic computer-vision heuristics, not a trained model. A table with a color close to the paper, a shadow touching the page edge, clutter, curled pages, low contrast or a cropped document can still cause an incorrect result. Always inspect the four handles and adjust them when necessary.
 
 ## Image enhancement
 
-After perspective correction, E-Scan estimates broad illumination variations from the Lab luminance channel and applies a bounded local gain. The gain is deliberately limited to reduce clipping and avoid amplifying very dark areas. A mild unsharp mask is then applied.
+After perspective correction, E-Scan builds a broad illumination estimate from the Lab luminance channel using a large morphological closing filter followed by smoothing. This helps keep small dark text strokes out of the illumination map before applying a bounded local gain. The gain is deliberately limited to reduce clipping and avoid amplifying very dark areas. A mild unsharp mask is then applied.
 
-This is a conservative first correction, not a guarantee that every cast shadow will disappear. Strong or sharply bounded shadows may remain. Inspect small text, colored stamps, signatures and fine lines; do not discard the original image. Avoid treating a visually brighter page as proof that no information was lost.
+This is a conventional image-processing correction, not a guarantee that every cast shadow will disappear. Strong or sharply bounded shadows may remain. Inspect small text, colored stamps, signatures and fine lines; do not discard the original image. Avoid treating a visually brighter page as proof that no information was lost.
 
 ## Manual validation checklist
 
