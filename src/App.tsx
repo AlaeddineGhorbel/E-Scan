@@ -101,6 +101,20 @@ function detectDocumentCorners(cv: OpenCV, source: OpenCV): Point[] | null {
   }
 }
 
+const MAX_SIDE = 4096;
+
+/** Lit l’image à sa résolution réelle (cv.imread(img) utiliserait la taille affichée à l’écran). */
+function readFullResolution(cv: OpenCV, image: HTMLImageElement): OpenCV {
+  const ratio = Math.min(1, MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D indisponible");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return cv.imread(canvas);
+}
+
 export default function App() {
   const imageRef = useRef<HTMLImageElement>(null);
   const outputRef = useRef<HTMLCanvasElement>(null);
@@ -151,13 +165,27 @@ export default function App() {
 
     window.setTimeout(() => {
       let source: OpenCV | undefined;
+      let small: OpenCV | undefined;
       let transform: OpenCV | undefined;
       let warped: OpenCV | undefined;
       let sourcePoints: OpenCV | undefined;
       let destinationPoints: OpenCV | undefined;
       try {
-        source = cv.imread(image);
-        const corners = detectDocumentCorners(cv, source);
+        source = readFullResolution(cv, image);
+        const detectionScale = Math.min(1, 1000 / Math.max(source.cols, source.rows));
+        let corners: Point[] | null;
+        if (detectionScale < 1) {
+          small = new cv.Mat();
+          cv.resize(
+            source, small,
+            new cv.Size(Math.round(source.cols * detectionScale), Math.round(source.rows * detectionScale)),
+            0, 0, cv.INTER_AREA
+          );
+          const found = detectDocumentCorners(cv, small);
+          corners = found ? found.map((point) => ({ x: point.x / detectionScale, y: point.y / detectionScale })) : null;
+        } else {
+          corners = detectDocumentCorners(cv, source);
+        }
         if (!corners) {
           // Aucun quadrilatère fiable : image probablement déjà cadrée (capture d’écran,
           // scan plat…). On l’affiche telle quelle pour que le bouton ait toujours un effet visible.
@@ -202,7 +230,7 @@ export default function App() {
         console.error(error);
         setMessage("Une erreur est survenue pendant le traitement. Essayez une autre image.");
       } finally {
-        [source, transform, warped, sourcePoints, destinationPoints].forEach((mat) => {
+        [source, small, transform, warped, sourcePoints, destinationPoints].forEach((mat) => {
           if (mat) { try { mat.delete(); } catch { /* already released */ } }
         });
         setBusy(false);
