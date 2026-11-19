@@ -70,7 +70,7 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
   let blurred: OpenCV | undefined;
   let kernel: OpenCV | undefined;
   let bestCorners: Point[] | null = null;
-  let bestArea = 0;
+  let bestScore = 0;
   const temporary: OpenCV[] = [];
 
   try {
@@ -106,7 +106,7 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
         try {
           const area = Math.abs(cv.contourArea(contour));
           const imageArea = source.cols * source.rows;
-          if (area < imageArea * 0.06 || area > imageArea * 0.98) continue;
+          if (area < imageArea * 0.07 || area > imageArea * 0.90) continue;
 
           const perimeter = cv.arcLength(contour, true);
           cv.approxPolyDP(contour, approx, 0.018 * perimeter, true);
@@ -123,9 +123,25 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
           // Favorise une grande feuille bien formée sans laisser un contour
           // presque plein écran gagner automatiquement.
           const fill = quadArea(ordered) / imageArea;
-          const score = area * (1 - Math.max(0, fill - 0.92) * 2);
-          if (score > bestArea) {
-            bestArea = score;
+          const xs = ordered.map((point) => point.x);
+          const ys = ordered.map((point) => point.y);
+          const margin = Math.min(...xs, ...ys, source.cols - 1 - Math.max(...xs), source.rows - 1 - Math.max(...ys));
+          // Une page qui touche les quatre bords est probablement le cadre photo,
+          // pas un document détecté avec certitude.
+          if (margin < Math.min(source.cols, source.rows) * 0.008) continue;
+          const top = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
+          const right = Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y);
+          const bottom = Math.hypot(ordered[3].x - ordered[2].x, ordered[3].y - ordered[2].y);
+          const left = Math.hypot(ordered[0].x - ordered[3].x, ordered[0].y - ordered[3].y);
+          const ratio = Math.max((top + bottom) / 2, (left + right) / 2) /
+                        Math.max(1, Math.min((top + bottom) / 2, (left + right) / 2));
+          if (ratio > 3.2) continue;
+          const balance = Math.min(top, bottom) / Math.max(top, bottom) *
+                          Math.min(left, right) / Math.max(left, right);
+          const sizeScore = Math.min(fill, 0.78);
+          const score = sizeScore * (0.65 + 0.35 * balance) * Math.min(1, margin / (Math.min(source.cols, source.rows) * 0.06));
+          if (score > bestScore) {
+            bestScore = score;
             bestCorners = ordered;
           }
         } finally {
@@ -281,8 +297,19 @@ export function findCorners(cv: OpenCV, source: OpenCV): { corners: Point[]; met
   try {
     const back = (points: Point[]) => points.map((p) => ({ x: p.x / scale, y: p.y / scale }));
     const edges = detectByEdges(cv, small);
-    if (edges) return { corners: back(edges), method: "edges" };
     const background = detectByBackground(cv, small);
+    // Compare candidates instead of giving unconditional priority to the first
+    // detector. The background detector is accepted only after geometry checks.
+    if (edges && background) {
+      const edgeArea = quadArea(edges) / (small.cols * small.rows);
+      const bgArea = quadArea(background) / (small.cols * small.rows);
+      const edgeNearFrame = edges.some((p) => p.x < small.cols * 0.008 || p.y < small.rows * 0.008 ||
+        p.x > small.cols * 0.992 || p.y > small.rows * 0.992);
+      if (edgeNearFrame && bgArea > 0.08 && bgArea < 0.88) return { corners: back(background), method: "background" };
+      if (bgArea > edgeArea * 1.18 && bgArea < 0.88) return { corners: back(background), method: "background" };
+      return { corners: back(edges), method: "edges" };
+    }
+    if (edges) return { corners: back(edges), method: "edges" };
     if (background) return { corners: back(background), method: "background" };
     return { corners: defaultCorners(source.cols, source.rows), method: "default" };
   } finally {
