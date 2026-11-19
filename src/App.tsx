@@ -19,6 +19,62 @@ function readFullResolution(cv: OpenCV, image: HTMLImageElement): OpenCV {
   return cv.imread(canvas);
 }
 
+/** Atténue les ombres et l'éclairage irrégulier sans modifier les couleurs du document.
+ * Estime l'éclairage avec un flou large, puis normalise uniquement la luminance Lab.
+ */
+function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
+  const lab = new cv.Mat();
+  const channels = new cv.MatVector();
+  const luminance = new cv.Mat();
+  const illumination = new cv.Mat();
+  const normalized = new cv.Mat();
+  const merged = new cv.Mat();
+  try {
+    cv.cvtColor(input, lab, cv.COLOR_RGBA2Lab);
+    cv.split(lab, channels);
+    const l = channels.get(0);
+    const a = channels.get(1);
+    const b = channels.get(2);
+    cv.GaussianBlur(l, illumination, new cv.Size(0, 0), Math.max(12, Math.min(input.cols, input.rows) / 18));
+    // L_corr = L * moyenne(éclairage) / éclairage local.
+    const mean = cv.mean(illumination)[0];
+    const illum32 = new cv.Mat();
+    const light32 = new cv.Mat();
+    const corrected32 = new cv.Mat();
+    try {
+      illumination.convertTo(illum32, cv.CV_32F);
+      l.convertTo(light32, cv.CV_32F);
+      cv.add(illum32, new cv.Scalar(1), illum32);
+      cv.multiply(light32, new cv.Scalar(mean + 1), corrected32);
+      cv.divide(corrected32, illum32, corrected32);
+      corrected32.convertTo(normalized, cv.CV_8U);
+    } finally {
+      illum32.delete();
+      light32.delete();
+      corrected32.delete();
+    }
+    const correctedChannels = new cv.MatVector();
+    correctedChannels.push_back(normalized);
+    correctedChannels.push_back(a);
+    correctedChannels.push_back(b);
+    try {
+      cv.merge(correctedChannels, merged);
+      const result = new cv.Mat();
+      cv.cvtColor(merged, result, cv.COLOR_Lab2RGBA);
+      return result;
+    } finally {
+      correctedChannels.delete();
+    }
+  } finally {
+    channels.delete();
+    lab.delete();
+    luminance.delete();
+    illumination.delete();
+    normalized.delete();
+    merged.delete();
+  }
+}
+
 /** Redresse le quadrilatère `corners` (coordonnées en pixels de `source`) vers `canvas`. */
 function warpToCanvas(cv: OpenCV, source: OpenCV, corners: Point[], canvas: HTMLCanvasElement): boolean {
   const [topLeft, topRight, bottomRight, bottomLeft] = corners;
@@ -36,6 +92,7 @@ function warpToCanvas(cv: OpenCV, source: OpenCV, corners: Point[], canvas: HTML
   let destinationPoints: OpenCV | undefined;
   let transform: OpenCV | undefined;
   let warped: OpenCV | undefined;
+  let litCorrected: OpenCV | undefined;
   let softened: OpenCV | undefined;
   let sharpened: OpenCV | undefined;
   try {
@@ -54,16 +111,17 @@ function warpToCanvas(cv: OpenCV, source: OpenCV, corners: Point[], canvas: HTML
       cv.INTER_CUBIC, cv.BORDER_REPLICATE
     );
 
-    // Netteté légère après redressement : renforce les caractères sans
-    // appliquer un filtre agressif qui créerait des halos ou du bruit.
+    // Corrige d'abord les variations d'éclairage et les ombres portées.
+    litCorrected = correctUnevenLighting(cv, warped);
+    // Netteté modérée après correction : évite les halos et la suraccentuation.
     softened = new cv.Mat();
     sharpened = new cv.Mat();
-    cv.GaussianBlur(warped, softened, new cv.Size(0, 0), 1.0);
-    cv.addWeighted(warped, 1.12, softened, -0.12, 0, sharpened);
+    cv.GaussianBlur(litCorrected, softened, new cv.Size(0, 0), 0.9);
+    cv.addWeighted(litCorrected, 1.22, softened, -0.22, 0, sharpened);
     cv.imshow(canvas, sharpened);
     return true;
   } finally {
-    [sourcePoints, destinationPoints, transform, warped, softened, sharpened].forEach((mat) => {
+    [sourcePoints, destinationPoints, transform, warped, litCorrected, softened, sharpened].forEach((mat) => {
       if (mat) { try { mat.delete(); } catch { /* déjà libéré */ } }
     });
   }
