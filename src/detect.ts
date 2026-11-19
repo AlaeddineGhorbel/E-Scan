@@ -3,14 +3,47 @@ export type OpenCV = any;
 export type Method = "edges" | "background" | "default";
 
 export function orderCorners(points: Point[]): Point[] {
-  const sums = points.map((p) => p.x + p.y);
-  const diffs = points.map((p) => p.y - p.x);
-  return [
-    points[sums.indexOf(Math.min(...sums))],
-    points[diffs.indexOf(Math.min(...diffs))],
-    points[sums.indexOf(Math.max(...sums))],
-    points[diffs.indexOf(Math.max(...diffs))]
-  ];
+  // Tri angulaire autour du centre : évite les doublons fréquents de la
+  // méthode min/max (x+y, y-x) sur les documents fortement inclinés.
+  const center = points.reduce(
+    (sum, point) => ({ x: sum.x + point.x / 4, y: sum.y + point.y / 4 }),
+    { x: 0, y: 0 }
+  );
+  const ordered = [...points].sort(
+    (a, b) => Math.atan2(a.y - center.y, a.x - center.x) -
+              Math.atan2(b.y - center.y, b.x - center.x)
+  );
+  const start = ordered.reduce(
+    (best, point, index) =>
+      point.x + point.y < ordered[best].x + ordered[best].y ? index : best,
+    0
+  );
+  return [...ordered.slice(start), ...ordered.slice(0, start)];
+}
+
+function plausibleQuad(points: Point[], width: number, height: number): boolean {
+  const sides = points.map((point, index) => {
+    const next = points[(index + 1) % 4];
+    return Math.hypot(next.x - point.x, next.y - point.y);
+  });
+  if (Math.min(...sides) < Math.min(width, height) * 0.10) return false;
+
+  // Écarte les quadrilatères dégénérés (fragments, reflets et objets fins).
+  for (let i = 0; i < 4; i += 1) {
+    const previous = points[(i + 3) % 4];
+    const current = points[i];
+    const next = points[(i + 1) % 4];
+    const ax = previous.x - current.x;
+    const ay = previous.y - current.y;
+    const bx = next.x - current.x;
+    const by = next.y - current.y;
+    const cosine = (ax * bx + ay * by) /
+      (Math.hypot(ax, ay) * Math.hypot(bx, by));
+    const angle = Math.acos(Math.max(-1, Math.min(1, cosine))) * 180 / Math.PI;
+    if (!Number.isFinite(angle) || angle < 18 || angle > 162) return false;
+  }
+  const areaRatio = quadArea(points) / (width * height);
+  return areaRatio >= 0.06 && areaRatio <= 0.985;
 }
 
 function quadArea(q: Point[]): number {
@@ -85,16 +118,14 @@ function detectByEdges(cv: OpenCV, source: OpenCV): Point[] | null {
           }));
           const ordered = orderCorners(points);
           const unique = new Set(ordered.map((point) => `${point.x},${point.y}`));
-          if (unique.size !== 4) continue;
+          if (unique.size !== 4 || !plausibleQuad(ordered, source.cols, source.rows)) continue;
 
-          const top = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
-          const bottom = Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y);
-          const left = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
-          const right = Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y);
-          if (Math.min(top, bottom, left, right) < Math.min(source.cols, source.rows) * 0.12) continue;
-
-          if (area > bestArea) {
-            bestArea = area;
+          // Favorise une grande feuille bien formée sans laisser un contour
+          // presque plein écran gagner automatiquement.
+          const fill = quadArea(ordered) / imageArea;
+          const score = area * (1 - Math.max(0, fill - 0.92) * 2);
+          if (score > bestArea) {
+            bestArea = score;
             bestCorners = ordered;
           }
         } finally {
