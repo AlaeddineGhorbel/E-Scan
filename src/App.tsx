@@ -218,6 +218,7 @@ export default function App() {
 
     window.setTimeout(() => {
       let source: OpenCV | undefined;
+      let stage = "Lecture de la photo";
       try {
         source = readFullResolution(cv, image);
         let fractions = corners;
@@ -225,6 +226,7 @@ export default function App() {
         let autoWarp = true;
 
         if (!fractions) {
+          stage = "Détection des coins";
           const found = findCorners(cv, source);
           fractions = found.corners.map((point) => ({ x: point.x / source.cols, y: point.y / source.rows }));
           setCorners(fractions);
@@ -244,6 +246,7 @@ export default function App() {
           return;
         }
 
+        stage = "Redressement et correction de l’éclairage";
         const pixels = fractions.map((fraction) => ({ x: fraction.x * source.cols, y: fraction.y * source.rows }));
         if (!warpToCanvas(cv, source, pixels, canvas)) {
           setHasResult(false);
@@ -253,8 +256,9 @@ export default function App() {
         setHasResult(true);
         announce(notice);
       } catch (error) {
-        console.error(error);
-        announce("Une erreur est survenue pendant le traitement. Essayez une autre image.");
+        console.error("E-Scan processing error:", stage, error);
+        const detail = error instanceof Error ? error.message : String(error);
+        announce(`Échec pendant « ${stage} » : ${detail.slice(0, 220)}`);
       } finally {
         if (source) { try { source.delete(); } catch { /* déjà libéré */ } }
         setBusy(false);
