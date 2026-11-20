@@ -33,7 +33,15 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
   let b: OpenCV | undefined;
   const correctedChannels = new cv.MatVector();
   try {
-    cv.cvtColor(input, lab, cv.COLOR_RGBA2Lab);
+    // OpenCV.js expose RGB2Lab / Lab2RGB (pas RGBA2Lab / Lab2RGBA).
+    // On retire puis rétablit explicitement le canal alpha.
+    const rgb = new cv.Mat();
+    try {
+      cv.cvtColor(input, rgb, cv.COLOR_RGBA2RGB);
+      cv.cvtColor(rgb, lab, cv.COLOR_RGB2Lab);
+    } finally {
+      rgb.delete();
+    }
     cv.split(lab, channels);
     l = channels.get(0);
     a = channels.get(1);
@@ -59,9 +67,18 @@ function correctUnevenLighting(cv: OpenCV, input: OpenCV): OpenCV {
     correctedChannels.push_back(a);
     correctedChannels.push_back(b);
     cv.merge(correctedChannels, merged);
+    const resultRgb = new cv.Mat();
     const result = new cv.Mat();
-    cv.cvtColor(merged, result, cv.COLOR_Lab2RGBA);
-    return result;
+    try {
+      cv.cvtColor(merged, resultRgb, cv.COLOR_Lab2RGB);
+      cv.cvtColor(resultRgb, result, cv.COLOR_RGB2RGBA);
+      return result;
+    } catch (error) {
+      result.delete();
+      throw error;
+    } finally {
+      resultRgb.delete();
+    }
   } finally {
     correctedChannels.delete();
     channels.delete();
